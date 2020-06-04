@@ -1,0 +1,169 @@
+---
+title: "DSC275 Project 1"
+author: "Thomas Hanson"
+date: "October 31, 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy=TRUE, tidy.opts=list(width.cutoff=60))
+library(forecast)
+library(openxlsx)
+library(ggplot2)
+```
+
+```{r}
+# Data Loading
+data = read.xlsx("Project1_DataSet.xlsx")
+tsdata=ts(data$'Miles,.in.Millions', frequency = 12)
+```
+
+```{r}
+# Part 1
+plot(tsdata, main='Time Series by Year', type="o", xlab="Year", ylab="Million Miles")
+# Part 2
+ggAcf(tsdata, main='ACF')
+```
+Peaks are 12 months apart, which indicates a yearly seasonal pattern  
+
+```{r}
+# 3
+# A moving average of 12 might be appropriate because it would be equal to the seasonal pattern (similar to the example at the end of the slides for the second lecture of Unit 2), allowing the moving average to better smooth over that seasonality
+
+plot(tsdata, main="Time Series with overlaid moving average", type='o', ylab=)
+ma1 = ma(tsdata, 12)
+lines(ma1, col="red")
+```
+4  
+The trendline shows a generally increasing pattern. Additionally visual inspection of the peaks point towards potentially additive seasonality.  
+
+
+```{r}
+# 5
+d1 = diff(tsdata)
+ggAcf(d1, main="First Difference ACF")
+ggPacf(d1, main="First Difference PACF")
+```
+There are Significant lags at 3, 9, 7, 12, 24 (and more) on the ACF  
+There are significant lags at 3, 4, 7, 8 (and more) on the PACF  
+
+
+6:  
+```{r}
+d2 = diff(d1, lag=12) # As directed, using the output from question 5
+ggAcf(d2, main="First Seasonal Difference ACF")
+ggPacf(d2, main="First Seasonal Difference PACF")
+```
+The ACF has significant peaks at 2, 10, and 12  
+The PACF has significant peaks at 2, 4, 8, 10 and 11  
+
+7:  
+```{r}
+# NOT RUN
+# auto.arima(dd, d=1, D=1, ic='aic', parallel=T, max.p=20, max.P=20, max.q=20, max.Q=20, max.order=85, num.cores=20, stepwise=F, allowdrift=F)
+# Due to runtime costs of running it without the stepwise function, it was run on a compute node of the BlueHive cluster
+# Result agrees with the auto.arima call below
+
+dd = ts(data$`Miles,.in.Millions`[1:72], frequency=12) # subset of the first 6 years (6*12=72) of the dataset, training data
+
+i=0
+# Dataframe to hold information about each model generated: AIC, BIC, SSE, and model parameters
+runs = setNames(data.frame(matrix(ncol=256, nrow=7), row.names = c('aic','bic','error','p','q','P','Q')), c(1:256))
+for (p in 0:3)
+  for (P in 0:3) 
+    for (q in 0:3) 
+      for (Q in 0:3) {
+        i=i+1
+        try({
+          m <- Arima(dd, order = c(p, 1, q), seasonal = list(order=c(P, 1, Q), period=12), include.constant = T);
+          f = forecast(m, h=12);
+          runs[i] = c(m$aic,m$bic,sum((f$mean-tsdata[73:84])^2),p,q,P,Q);},
+          silent=T);
+      }
+
+runs[,which.min(runs['aic',])] # Model with lowest AIC, ARIMA(2,1,3)(1,1,0)
+runs[,which.min(runs['bic',])] # Model with lowest BIC, ARIMA(0,1,2)(0,1,0)
+runs[,which.min(runs['error',])] # Model with lowest forecast errror, ARIMA(0,1,1)(2,1,0)
+
+auto.arima(dd, start.p = 2, start.q = 3, start.P = 1, start.Q = 0, d=1, D=1, ic="aic", trace = T, max.p = 4, max.P = 4, max.q = 4, max.Q = 4, max.order = 20, nmodels=75) # ARIMA(0,1,2)(1,1,0)
+# Max values for p,P,q and Q from the notes given in class on 10/24
+
+
+m1 = Arima(dd, order = c(0,1,2), seasonal = c(1,1,0), include.constant = T) # AIC 148.97 from auto.arima output
+m2 = Arima(dd, order = c(2,1,3), seasonal = c(1,1,0), include.constant = T) # AIC 147.28 from manual search
+m3 = Arima(dd, order = c(0,1,2), seasonal = c(0,1,0), include.constant = T) # AIC 150.1 lowest BIC from grid search
+m4 = Arima(dd, order = c(0,1,1), seasonal = c(2,1,0), include.constant = T) # AIC 153.8 lowest forecast error from grid search
+```
+The forecast package's auto.arima function does not give us the same model as the iterative search. This is because the auto.arima function does not look at only the AIC (or other information criteria) when determining the best model. The function also looks at the root of the AR and MA polynomials to check that they are "mathmatically well behaved". Those that are not, that have roots close to the unit circle (adding imaginary terms), are rejected by having their AIC set to $\infty$ along with any that do actually fall within that circle. You can see the first model checked by the auto.arima function in the trace is the model found by the manual search and it's AIC is shown as infinite. For the last question I will use both models and compare the results. 
+
+8:  
+```{r}
+plot(dd, xlab = "Time in Years", ylab = "Miles in Millions", main = "Time Series with overlaid fitted values")
+points(m1$fitted, col="red", type='l')
+points(m2$fitted, col="blue", type='l')
+
+par(mfrow=c(2,1))
+
+Next_Forecast = forecast(m1, h=12) # Forecasts the next 12 periods (months) based on the data up through year 6 using the subset data and model derived in part 6.
+plot(Next_Forecast, include=0, xlab = "Time, fractions of a year", ylab = "Miles in Millions", main = "ARIMA from auto.arima")
+points(x=seq(7, 8-1/12, by=1/12), y=tsdata[73:84], type='o')
+
+
+Next_Forecast2 = forecast(m2, h=12)
+plot(Next_Forecast2, include=0, xlab = "Time, fractions of a year", ylab = "Miles in Millions", main = "ARIMA from grid search")
+points(x=seq(7, 8-1/12, by=1/12), y=tsdata[73:84], type='o')
+
+# SSE, grid search model lower
+sum((Next_Forecast$mean-tsdata[73:84])^2)
+sum((Next_Forecast2$mean-tsdata[73:84])^2)
+# Mean Error, Root Mean Square Error, Mean Absolute Error, Mean Percentage Error, Mean Absolute Percentage Error, Mean Absolute Scaled Error
+# Grid Search model has lower error across the board 
+accuracy(Next_Forecast, x=tsdata[73:84])
+accuracy(Next_Forecast2, x=tsdata[73:84])
+```
+Between the two models, it does seem that the model found by the grid search (ARIMA(2,1,3)(1,1,0)[12]) is a better fit for the data, both the training and testing partitions. The model has an AIC of 147.28, SSE of 8.86, and visually fits the test data very well with one exception, month 4. Every other month fits either directly on the point forecast or at least within the 95% confidence range. There is the one outlier in the model, month 4, which i believe to be due to a valley similar to the projected values in the pervious year. Looking at the graph of the previous year, we see a dip between months 3 and 5 which is not found in the year before it. Therefore I expect that the seasonal AR portion of the model may be to blame for this particular error.
+```{r}
+par(mfrow=c(1,2))
+plot(tsdata[39:50], type='o', xlab = "Month", ylab = "Miles in Millions", main = "Year 5 Data")
+plot(tsdata[51:62], type='o', xlab = "Month", ylab = "Miles in Millions", main = "Year 6 Data")
+```
+I will therefore make a few more models which I will then score by error on the testing data and compare them to the extra models i calculated for part 7.  
+```{r}
+# Lowest BIC from grid search
+# ARIMA(0,1,2)(1,2,0)
+f3 = forecast(m3, h=12)
+plot(f3, include=0, xlab = "Time, fractions of a year", ylab = "Miles in Millions", main = "Lowest BIC ARIMA")
+points(x=seq(7, 8-1/12, by=1/12), y=tsdata[73:84], type='o')
+accuracy(f3, x=tsdata[73:84])
+sum((f3$mean-tsdata[73:84])^2)
+
+# Lowest forecast error from grid search
+# ARIMA(0,1,1)(2,1,0)
+f4 = forecast(m4, h=12)
+plot(f4, include=0, xlab = "Time, fractions of a year", ylab = "Miles in Millions", main = "Lowest Forecast Error ARIMA")
+points(x=seq(7, 8-1/12, by=1/12), y=tsdata[73:84], type='o')
+accuracy(f4, x=tsdata[73:84])
+sum((f4$mean-tsdata[73:84])^2) # 6.4
+
+# New model from increasing model 2's P by 1
+m5 = Arima(dd, order = c(2,1,3), seasonal = c(2,1,0), include.constant = T) # 
+m5$aic
+f5 = forecast(m5, h=12)
+plot(f5, include=0, xlab = "Time, fractions of a year", ylab = "Miles in Millions", main = "ARIMA(2,1,3)(2,1,0)")
+points(x=seq(7, 8-1/12, by=1/12), y=tsdata[73:84], type='o')
+accuracy(f5, x=tsdata[73:84])
+sum((f5$mean-tsdata[73:84])^2)
+# Compared to the grid search model, some erros are lower, and some are higher.
+
+# New model from increasing model 5's Q by 1
+m6 = Arima(dd, order = c(2,1,3), seasonal = c(2,1,1), include.constant = T) # 
+m6$aic
+f6 = forecast(m6, h=12)
+plot(f6, include=0, xlab = "Time, fractions of a year", ylab = "Miles in Millions", main = "ARIMA(2,1,3)(2,1,1)")
+points(x=seq(7, 8-1/12, by=1/12), y=tsdata[73:84], type='o')
+accuracy(f6, x=tsdata[73:84])
+sum((f6$mean-tsdata[73:84])^2)
+# This model's error is strictly better than that of the grid search model
+
+```
+As we would expect, the model with the lowest forecast erorr has the best forecast for this testing set. However, even that model has issues with month 4's data point, with the actual value being just barely outside of the 80% confidence interval. The lowest SSE (of the minimized forecast error model) is 6.4, the two new models I made to try and address the issue at month 4 have SSE's around 8.1-8.5, which is still a good error value and lower than the best AIC model (8.7) but significantly higher. The model selected by BIC score has the highest erorr of all at 19.1. Ideally we would apply some form of cross validation while training these models in order to help select between these models with good forecasting abilities, as there are several models with very similar AIC values but significantly different forecast errors (and the minimized error model is likely not generalizeable to further forecasts).
